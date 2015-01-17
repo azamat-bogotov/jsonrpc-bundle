@@ -181,6 +181,45 @@ class JsonRpcControllerTest extends \PHPUnit_Framework_TestCase {
         $this->assertEquals('Hi Tom!', $response['result']);
     }
 
+    public function testBatch()
+    {
+        // two different methods
+        $requestData = array(
+            array(
+                'jsonrpc' => '2.0',
+                'id'      => 'test1',
+                'method'  => 'testhello',
+                'params'  => array('name' => 'Joe')
+            ),
+            array(
+                'jsonrpc' => '2.0',
+                'id'      => 'test2',
+                'method'  => 'testhi',
+                'params'  => array('name' => 'Joe')
+            )
+        );
+
+        // add the method definition for "testhi"
+        $this->controller->addMethod('testhi', 'wa72_jsonrpc.testservice', 'hi');
+
+        $response = $this->makeRequest($this->controller, $requestData);
+        $this->assertEquals(true, is_array($response) && count($response) == 2);
+
+        $i = 0;
+        foreach ($response as $key => $value) {
+            // the key must be an integer value and equal to 0 or 1(becouse array length == 2)
+            $this->assertEquals(true, is_array($value) && ($key === $i++));
+            $this->assertArrayHasKey('jsonrpc', $value);
+            $this->assertEquals('2.0', $value['jsonrpc']);
+            $this->assertEquals($requestData[$key]['id'], $value['id']);
+            $this->assertArrayHasKey('result', $value);
+            $this->assertArrayNotHasKey('error', $value);
+
+            $t = ($requestData[$key]['method'] == 'testhello') ? 'Hello' : 'Hi';
+            $this->assertEquals($t . ' ' . $requestData[$key]['params']['name'] . '!', $value['result']);
+        }
+    }
+
     private function makeRequest($controller, $requestdata)
     {
         /** @var \JMS\Serializer\Serializer $serializer */

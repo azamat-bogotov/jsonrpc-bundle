@@ -88,19 +88,52 @@ class JsonRpcController extends ContainerAware
      */
     public function execute(Request $httprequest)
     {
-        $json = $httprequest->getContent();
+        $json    = $httprequest->getContent();
         $request = json_decode($json, true);
-        $requestId = (isset($request['id']) ? $request['id'] : null);
 
         if ($request === null) {
-            return $this->getErrorResponse(self::PARSE_ERROR, null);
-        } elseif (!(isset($request['jsonrpc']) && isset($request['method']) && $request['jsonrpc'] == '2.0')) {
+            $response = $this->getErrorResponse(self::PARSE_ERROR, null);
+        } elseif (!is_array($request)) {
+            $response = $this->getErrorResponse(self::INVALID_REQUEST, null);
+        } elseif (!$this->isAssoc($request)) {
+            // is batch request
+            $response = array();
+            foreach ($request as $r) {
+                //TODO: set max count of request and max execution time per request item.
+                $response[] = $this->executeMethod($r);
+            }
+            $response = '[' . implode(',', $response) . ']';
+        } else {
+            $response = $this->executeMethod($request);
+        }
+
+        return new Response($response, 200, array('Content-Type' => 'application/json'));
+    }
+
+    protected function isValidRpcFormat($obj)
+    {
+        if (!is_array($obj)
+            || !isset($obj['jsonrpc'])
+            || !isset($obj['method'])
+            || ($obj['jsonrpc'] !== '2.0')
+            || !is_string($obj['method'])
+        ) {
+            return false;
+        }
+        return true;
+    }
+
+    public function executeMethod($request)
+    {
+        $requestId = (isset($request['id']) ? $request['id'] : null);
+
+        if (!$this->isValidRpcFormat($request)) {
             return $this->getErrorResponse(self::INVALID_REQUEST, $requestId);
         }
 
-        if (in_array($request['method'], array_keys($this->functions))) {
+        if (array_key_exists($request['method'], $this->functions)) {
             $servicename = $this->functions[$request['method']]['service'];
-            $method = $this->functions[$request['method']]['method'];
+            $method      = $this->functions[$request['method']]['method'];
         } else {
             if (count($this->services) && strpos($request['method'], ':') > 0) {
                 list($servicename, $method) = explode(':', $request['method']);
@@ -111,6 +144,7 @@ class JsonRpcController extends ContainerAware
                 return $this->getErrorResponse(self::METHOD_NOT_FOUND, $requestId);
             }
         }
+
         try {
             $service = $this->container->get($servicename);
         } catch (ServiceNotFoundException $e) {
@@ -119,7 +153,7 @@ class JsonRpcController extends ContainerAware
         $params = (isset($request['params']) ? $request['params'] : array());
 
         if (is_callable(array($service, $method))) {
-            $r = new \ReflectionMethod($service, $method);
+            $r   = new \ReflectionMethod($service, $method);
             $rps = $r->getParameters();
 
             if (is_array($params)) {
@@ -130,7 +164,6 @@ class JsonRpcController extends ContainerAware
                         sprintf('Number of given parameters (%d) does not match the number of expected parameters (%d required, %d total)',
                             count($params), $r->getNumberOfRequiredParameters(), $r->getNumberOfParameters()));
                 }
-
             }
             if ($this->isAssoc($params)) {
                 $newparams = array();
@@ -183,10 +216,10 @@ class JsonRpcController extends ContainerAware
                 $response = json_encode($response);
             }
 
-            return new Response($response, 200, array('Content-Type' => 'application/json'));
-        } else {
-            return $this->getErrorResponse(self::METHOD_NOT_FOUND, $requestId);
+            return $response;
         }
+
+        return $this->getErrorResponse(self::METHOD_NOT_FOUND, $requestId);
     }
 
     /**
@@ -267,7 +300,7 @@ class JsonRpcController extends ContainerAware
 
         $response['id'] = $id;
 
-        return new Response(json_encode($response), 200, array('Content-Type' => 'application/json'));
+        return json_encode($response);
     }
 
     /**
@@ -308,7 +341,7 @@ class JsonRpcController extends ContainerAware
 
         return $serializationContext;
     }
-    
+
     /**
      * Finds whether a variable is an associative array
      *
